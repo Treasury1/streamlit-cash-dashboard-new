@@ -1,160 +1,285 @@
-import streamlit as st
+# app.py — Cash and Cash Equivalents Dashboard (Final Version)
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Any, Dict, Tuple
+import math
+import gspread
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
-import os
+import streamlit as st
+from google.oauth2.service_account import Credentials
 
-st.set_page_config(layout="wide")
+# --- Konstanta ---
+SHEET_GIRO_DEPOSITO = "giro deposito"
+SHEET_TOTAL = "total"
+SCOPES = (
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+)
 
-# =========================
-# FORMAT ANGKA (AMAN)
-# =========================
-def fmt_number(x):
-    try:
-        if pd.isna(x):
-            return "-"
-        return "{:,.0f}".format(x).replace(",", ".")
-    except:
-        return x
+@dataclass(frozen=True)
+class ColGD:
+    tanggal: str = "TANGGAL"
+    bank: str = "BANK"
+    tipe: str = "TYPE"
+    cabang_pusat: str = "CABANG/PUSAT"
+    keterangan: str = "KETERANGAN"
+    saldo: str = "SALDO AKHIR"
 
-# =========================
-# STYLE
-# =========================
-st.markdown("""
-<style>
-h1 {text-align:center;}
-.footer {text-align:center; font-size:14px; color:#555;}
-</style>
-""", unsafe_allow_html=True)
+@dataclass(frozen=True)
+class ColTotal:
+    tahun: str = "TAHUN"
+    total: str = "CASH & CASH EQUIVALENTS"
 
-# =========================
-# LOAD DATA (AMAN)
-# =========================
-sheet_id = "1vTzm9o_m2wwiiS4jWPbP-nMmelIwJCSonBx-pmiN2Q0"
+# --- CSS Layout ---
+def _css_layout():
+    st.markdown(
+        """
+        <style>
+          .block-container {padding-top: 1.2rem !important; max-width: 1400px;}
+          h1 {text-align:center;font-size:1.6rem !important;margin-bottom:0.6rem;}
+          table th {text-align:center !important;font-weight:700 !important;background-color:#f8f9fa !important;}
+          table td:first-child {text-align:left !important;}
+          .footer-credit {
+              text-align:center;
+              font-size:0.8rem;
+              color:#555;
+              font-style:italic;
+              margin-top:1.2rem;
+              padding:0.25rem 0;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-def load_data(sheet_name):
-    try:
-        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-        return pd.read_csv(url)
-    except:
-        return pd.DataFrame()
+# --- Utility ---
+def round_half_up(n):
+    """Pembulatan ke atas jika >= .5 (standar keuangan)"""
+    if pd.isna(n):
+        return 0
+    return math.floor(n + 0.5)
 
-df_saldo = load_data("SALDO")
-df_cf = load_data("CASHFLOW")
+def _require_secrets() -> Tuple[str, Dict[str, Any]]:
+    if "SPREADSHEET_ID" not in st.secrets or "gcp_service_account" not in st.secrets:
+        raise KeyError("Missing Streamlit secrets")
+    return str(st.secrets["SPREADSHEET_ID"]).strip(), dict(st.secrets["gcp_service_account"])
 
-if df_saldo.empty:
-    st.error("Data SALDO tidak ditemukan")
-    st.stop()
+@st.cache_resource
+def _gs_client(service_account_info: Dict[str, Any]) -> gspread.Client:
+    creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+    return gspread.authorize(creds)
 
-# =========================
-# PREPROCESS
-# =========================
-df_saldo['TANGGAL'] = pd.to_datetime(df_saldo['TANGGAL'], errors='coerce')
-latest_date = df_saldo['TANGGAL'].max()
+@st.cache_data(ttl=300)
+def _load_sheet(spreadsheet_id: str, worksheet_name: str, service_account_info: Dict[str, Any]) -> pd.DataFrame:
+    gc = _gs_client(service_account_info)
+    ws = gc.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    return pd.DataFrame(ws.get_all_records())
 
-saldo_latest = df_saldo[df_saldo['TANGGAL'] == latest_date].copy()
+def _to_numeric(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(
+        s.astype(str).str.replace(",", "", regex=False).str.replace(" ", "", regex=False),
+        errors="coerce",
+    )
 
-for col in ['BANK', 'JENIS SALDO', 'KETERANGAN']:
-    if col in saldo_latest.columns:
-        saldo_latest[col] = saldo_latest[col].astype(str).str.upper().str.strip()
+def _style_grand_total(df: pd.DataFrame, label_col: str) -> str:
+    """Return HTML table with grand total styled"""
+    styled = df.copy()
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    html = "<table style='width:100%;border-collapse:collapse;'>"
+    html += "<thead><tr>"
+    for col in df.columns:
+        html += f"<th style='border:1px solid #ddd;padding:6px;background:#f8f9fa;text-align:center;'>{col}</th>"
+    html += "</tr></thead><tbody>"
+    for _, row in styled.iterrows():
+        if str(row[label_col]) == "Grand Total":
+            html += "<tr style='background:#f2f2f2;font-weight:700;'>"
+        else:
+            html += "<tr>"
+        for col in df.columns:
+            align = "left" if col == label_col else "right"
+            val = row[col]
+            if col in numeric_cols:
+                val = f"{val:,.0f}"
+            html += f"<td style='border:1px solid #ddd;padding:6px;text-align:{align};'>{val}</td>"
+        html += "</tr>"
+    html += "</tbody></table>"
+    return html
 
-# =========================
-# HEADER
-# =========================
-col1, col2 = st.columns([1,6])
+# --- Main ---
+def main():
+    st.set_page_config(page_title="Cash and Cash Equivalents Dashboard", layout="wide")
+    _css_layout()
 
-with col1:
-    logo_path = os.path.join(os.path.dirname(__file__), "asdp-logo.png")
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=80)
+    spreadsheet_id, svc = _require_secrets()
+    gd = _load_sheet(spreadsheet_id, SHEET_GIRO_DEPOSITO, svc)
+    total = _load_sheet(spreadsheet_id, SHEET_TOTAL, svc)
 
-with col2:
-    st.markdown("<h1>Cash and Cash Equivalents Dashboard</h1>", unsafe_allow_html=True)
+    cg = ColGD()
+    ct = ColTotal()
 
-st.markdown(f"**Data per: {latest_date.strftime('%d %B %Y')}**")
+    gd[cg.bank] = gd[cg.bank].astype(str).str.strip().str.upper()
+    gd[cg.tipe] = gd[cg.tipe].astype(str).str.strip().str.upper()
+    gd[cg.cabang_pusat] = gd[cg.cabang_pusat].astype(str).str.strip().str.upper()
+    gd[cg.keterangan] = gd[cg.keterangan].astype(str).fillna("").str.strip().str.upper()
+    gd[cg.saldo] = _to_numeric(gd[cg.saldo]).fillna(0.0)
 
-# =========================
-# PIVOT TABLE
-# =========================
-pivot = saldo_latest.pivot_table(
-    index='BANK',
-    columns='JENIS SALDO',
-    values='SALDO',
-    aggfunc='sum',
-    fill_value=0
-).reset_index()
+    # Ambil tanggal terbaru
+    update_date = pd.to_datetime(gd[cg.tanggal], errors="coerce").max()
 
-pivot['TOTAL'] = pivot.get('GIRO',0) + pivot.get('DEPOSITO',0)
-pivot = pivot.sort_values(by='TOTAL', ascending=False)
+    # --- Judul dan Update Info ---
+    st.markdown(
+        """
+        <div style='text-align:center;'>
+            <h1>Cash and Cash Equivalents Dashboard</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-# =========================
-# LAYOUT
-# =========================
-col1, col2, col3 = st.columns([1.2,1.2,1.6])
+    st.markdown(
+        f"""
+        <div style='text-align:left; font-style:italic; margin-top:-0.4rem; margin-bottom:1rem;'>
+            Updated per {update_date.strftime('%d %B %Y')}<br>
+            (In Billion Rupiah)
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-# =========================
-# TABLE SALDO
-# =========================
-with col1:
-    st.subheader("Saldo per Bank")
+    # === Pisahkan data utama ===
+    deposito_restricted = gd[
+        (gd[cg.tipe] == "DEPOSITO")
+        & (gd[cg.keterangan].str.contains(r"\bRESTRICT(ED)?\b", case=False, na=False))
+        & (~gd[cg.keterangan].str.contains("NON", case=False, na=False))
+    ]
+    restricted_total = deposito_restricted[cg.saldo].sum()
 
-    pivot_display = pivot.copy()
-    for col in ['GIRO','DEPOSITO','TOTAL']:
-        if col in pivot_display.columns:
-            pivot_display[col] = pivot_display[col].apply(fmt_number)
+    deposito_non = gd[
+        (gd[cg.tipe] == "DEPOSITO")
+        & (gd[cg.keterangan].str.contains("NON", case=False, na=False))
+    ]
+    giro = gd[gd[cg.tipe] == "GIRO"]
+    kas = gd[gd[cg.tipe] == "KAS"]
 
-    st.dataframe(pivot_display, use_container_width=True, hide_index=True)
+    # === BAGIAN ATAS ===
+    table_total = pd.DataFrame({"Cabang/Pusat": ["CABANG", "PUSAT"]})
+    depo_non_sum = deposito_non.groupby(cg.cabang_pusat, as_index=False)[cg.saldo].sum()
+    depo_non_sum.rename(columns={cg.saldo: "Total Deposito (Non Restricted)"}, inplace=True)
+    table_total = table_total.merge(depo_non_sum, left_on="Cabang/Pusat", right_on=cg.cabang_pusat, how="left")
 
-# =========================
-# SUMMARY (ANTI ERROR)
-# =========================
-    st.subheader("Restricted vs Non Restricted")
+    giro_sum = giro.groupby(cg.cabang_pusat, as_index=False)[cg.saldo].sum()
+    giro_sum.rename(columns={cg.saldo: "Total Giro"}, inplace=True)
+    table_total = table_total.merge(giro_sum, left_on="Cabang/Pusat", right_on=cg.cabang_pusat, how="left")
 
-    if not saldo_latest.empty:
-        summary = saldo_latest.groupby(['JENIS SALDO','KETERANGAN'])['SALDO'].sum()
+    kas_sum = kas.groupby(cg.cabang_pusat, as_index=False)[cg.saldo].sum()
+    kas_sum.rename(columns={cg.saldo: "Total Kas"}, inplace=True)
+    table_total = table_total.merge(kas_sum, left_on="Cabang/Pusat", right_on=cg.cabang_pusat, how="left")
 
-        if isinstance(summary, pd.Series):
-            summary = summary.unstack(fill_value=0)
+    table_total = table_total.drop(columns=[c for c in table_total.columns if "CABANG/PUSAT" in c.upper() and c != "Cabang/Pusat"], errors="ignore").fillna(0)
+    table_total["Total"] = table_total["Total Deposito (Non Restricted)"] + table_total["Total Giro"] + table_total["Total Kas"]
 
-        if summary.empty:
-            summary = pd.DataFrame({'RESTRICTED':[0],'NON RESTRICTED':[0]})
+    for col in ["Total Deposito (Non Restricted)", "Total Giro", "Total Kas", "Total"]:
+        table_total[col] = table_total[col].apply(round_half_up)
 
-        summary['TOTAL'] = summary.sum(axis=1)
+    table_total.loc[len(table_total)] = [
+        "Grand Total",
+        table_total["Total Deposito (Non Restricted)"].sum(),
+        table_total["Total Giro"].sum(),
+        table_total["Total Kas"].sum(),
+        table_total["Total"].sum(),
+    ]
 
-        for col in ['RESTRICTED','NON RESTRICTED']:
-            if col not in summary.columns:
-                summary[col] = 0
+    # Grafik tren
+    total[ct.tahun] = total[ct.tahun].astype(str)
+    total[ct.total] = _to_numeric(total[ct.total])
+    total = total.sort_values(ct.tahun)
+    total["YoY Change %"] = total[ct.total].pct_change() * 100
 
-        summary = summary[['RESTRICTED','NON RESTRICTED','TOTAL']]
+    bar_texts = []
+    for i, row in total.iterrows():
+        val_text = f"{row[ct.total]:,.0f}"
+        if not pd.isna(row["YoY Change %"]) and i != total.index[0]:
+            if row["YoY Change %"] > 0:
+                bar_texts.append(f"{val_text}<br><span style='color:#2ECC71;'>↑ {row['YoY Change %']:.1f}%</span>")
+            elif row["YoY Change %"] < 0:
+                bar_texts.append(f"{val_text}<br><span style='color:#E74C3C;'>↓ {abs(row['YoY Change %']):.1f}%</span>")
+            else:
+                bar_texts.append(f"{val_text}<br>0.0%")
+        else:
+            bar_texts.append(val_text)
 
-        for col in summary.columns:
-            summary[col] = summary[col].apply(fmt_number)
+    fig_bar = go.Figure()
+    fig_bar.add_bar(x=total[ct.tahun], y=total[ct.total], text=bar_texts, textposition="outside")
+    fig_bar.add_scatter(x=total[ct.tahun], y=total[ct.total], mode="lines+markers", line=dict(width=2))
+    ymax = total[ct.total].max()
+    fig_bar.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(range=[0, ymax * 1.2]))
 
-        st.dataframe(summary, use_container_width=True)
+    colA, colB = st.columns(2)
+    with colA:
+        st.subheader("Total Cash and Cash Equivalents")
+        st.markdown(_style_grand_total(table_total, label_col="Cabang/Pusat"), unsafe_allow_html=True)
+        st.markdown(f"<div style='font-style:italic;margin-top:6px;'>*Exclude Restricted Deposito: {round_half_up(restricted_total):,.0f}*</div>", unsafe_allow_html=True)
+    with colB:
+        st.subheader("Cash and Cash Equivalents Trend")
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-# =========================
-# PIE CHART
-# =========================
-with col2:
-    st.subheader("Persentase Giro")
+    # === BAGIAN BAWAH ===
+    giro_pusat = giro[giro[cg.cabang_pusat] == "PUSAT"]
+    giro_cabang = giro[giro[cg.cabang_pusat] == "CABANG"]
+    df_detail = (
+        pd.DataFrame({cg.bank: gd[cg.bank].unique()})
+        .merge(giro_pusat.groupby(cg.bank, as_index=False)[cg.saldo].sum().rename(columns={cg.saldo: "Giro Pusat"}), on=cg.bank, how="left")
+        .merge(giro_cabang.groupby(cg.bank, as_index=False)[cg.saldo].sum().rename(columns={cg.saldo: "Giro Cabang"}), on=cg.bank, how="left")
+        .merge(deposito_non.groupby(cg.bank, as_index=False)[cg.saldo].sum().rename(columns={cg.saldo: "Deposito (Non Restricted)"}), on=cg.bank, how="left")
+        .merge(kas.groupby(cg.bank, as_index=False)[cg.saldo].sum().rename(columns={cg.saldo: "Kas"}), on=cg.bank, how="left")
+        .fillna(0)
+    )
+    df_detail["Total"] = df_detail["Giro Pusat"] + df_detail["Giro Cabang"] + df_detail["Deposito (Non Restricted)"] + df_detail["Kas"]
+    for col in ["Giro Pusat", "Giro Cabang", "Deposito (Non Restricted)", "Kas", "Total"]:
+        df_detail[col] = df_detail[col].apply(round_half_up)
+    df_detail = df_detail.sort_values("Total", ascending=False)
+    df_detail.loc[len(df_detail)] = [
+        "Grand Total",
+        df_detail["Giro Pusat"].sum(),
+        df_detail["Giro Cabang"].sum(),
+        df_detail["Deposito (Non Restricted)"].sum(),
+        df_detail["Kas"].sum(),
+        df_detail["Total"].sum(),
+    ]
 
-    if 'GIRO' in pivot.columns:
-        fig = px.pie(pivot, names='BANK', values='GIRO', hole=0.4)
-        st.plotly_chart(fig, use_container_width=True)
+    color_map = {
+        'BRI': '#0A3185', 'BSI': '#00A39D', 'BTN': '#0057B8', 'BNI': '#F37021', 'MANDIRI': '#002F6C',
+        'CIMB': '#990000', 'BJB': '#AB9B56', 'BCA': '#00529B', 'BANK RAYA': '#00549A',
+        'BTN SYARIAH': '#FFC20E', 'BRI USD': '#0A3185', 'BCA SYARIAH': '#00979D', 'KAS': '#D3D3D3'
+    }
 
-# =========================
-# TREND
-# =========================
-with col3:
-    st.subheader("Trend Saldo")
+    pie_data = df_detail[df_detail[cg.bank] != "Grand Total"]
+    fig_pie = go.Figure(
+        data=[
+            go.Pie(
+                labels=pie_data[cg.bank],
+                values=pie_data["Total"],
+                text=[f"{b}<br>{(v / pie_data['Total'].sum()) * 100:.1f}%" for b, v in zip(pie_data[cg.bank], pie_data["Total"])],
+                textinfo="text",
+                textposition="outside",
+                pull=[0.03] * len(pie_data),
+                marker=dict(colors=[color_map.get(b, '#CCCCCC') for b in pie_data[cg.bank]]),
+                hole=0.35,
+            )
+        ]
+    )
+    fig_pie.update_layout(height=450, margin=dict(l=40, r=40, t=40, b=40), showlegend=False)
 
-    df_saldo['BULAN'] = df_saldo['TANGGAL'].dt.to_period('M').dt.to_timestamp()
-    trend = df_saldo.groupby('BULAN')['SALDO'].sum().reset_index().tail(12)
+    col1, col2 = st.columns([1.1, 0.9])
+    with col1:
+        st.subheader("Cash and Cash Equivalents Details per Bank")
+        st.markdown(_style_grand_total(df_detail, label_col=cg.bank), unsafe_allow_html=True)
+    with col2:
+        st.subheader("% Cash and Equivalents per Bank (Exclude Restricted)")
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-    fig = px.line(trend, x='BULAN', y='SALDO')
-    st.plotly_chart(fig, use_container_width=True)
+    st.markdown("<div class='footer-credit'>Created by Nur Vita Anajningrum</div>", unsafe_allow_html=True)
 
-# =========================
-# FOOTER
-# =========================
-st.markdown("<div class='footer'>Created by Nur Vita Anjaningrum</div>", unsafe_allow_html=True)
+if __name__ == "__main__":
+    main()
