@@ -191,50 +191,50 @@ def main():
     ]
 
     # Grafik tren
-    # --- FIX: Urut berdasarkan bulan + tetap Indo (ANTI ERROR) ---
-    bulan_map = {
+# --- FIX: Urut berdasarkan bulan + tetap Indo ---
+bulan_map = {
     "Jan": "Jan", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr",
     "Mei": "May", "Jun": "Jun", "Jul": "Jul", "Agu": "Aug",
     "Sep": "Sep", "Okt": "Oct", "Nov": "Nov", "Des": "Dec"
-    }
+}
 
-    bulan_map_reverse = {
+bulan_map_reverse = {
     "Jan": "Jan", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr",
     "May": "Mei", "Jun": "Jun", "Jul": "Jul", "Aug": "Agu",
     "Sep": "Sep", "Oct": "Okt", "Nov": "Nov", "Dec": "Des"
-    }
+}
 
-    # Bersihin string
-    total[ct.tahun] = total[ct.tahun].astype(str).str.strip()
+# pastikan string
+total[ct.tahun] = total[ct.tahun].astype(str).str.strip()
 
-    # Replace bulan Indo → English
+# convert Indo → English
 for indo, eng in bulan_map.items():
     total[ct.tahun] = total[ct.tahun].str.replace(indo, eng, regex=False)
 
-    # Convert ke datetime (flexible, gak strict)
-    total["date"] = pd.to_datetime(total[ct.tahun], errors="coerce")
+# convert ke datetime
+total["date"] = pd.to_datetime(total[ct.tahun], errors="coerce")
 
-    # Drop yang error
-    total = total.dropna(subset=["date"])
+# drop error
+total = total.dropna(subset=["date"])
 
-    # Sort berdasarkan tanggal
-    total = total.sort_values("date")
+# sort berdasarkan waktu
+total = total.sort_values("date")
 
-    # Format label Indo lagi
-    total["label"] = total["date"].dt.strftime("%Y %b")
+# balik ke format Indo
+total["label"] = total["date"].dt.strftime("%Y %b")
 
 for eng, indo in bulan_map_reverse.items():
     total["label"] = total["label"].str.replace(eng, indo, regex=False)
 
-    # Numeric
-    total[ct.total] = _to_numeric(total[ct.total])
+# numeric
+total[ct.total] = _to_numeric(total[ct.total])
 
-    # Growth
-    total["YoY Change %"] = total[ct.total].pct_change() * 100
+# growth
+total["YoY Change %"] = total[ct.total].pct_change() * 100
 
     fig_bar = go.Figure()
-    fig_bar.add_bar(x=total["label"], y=total[ct.total], text=bar_texts, textposition="outside")
-    fig_bar.add_scatter(x=total["label"], y=total[ct.total], mode="lines+markers", line=dict(width=2))
+    fig_bar.add_bar(x=total["label"], y=total[ct.total], ...)
+    fig_bar.add_scatter(x=total["label"], y=total[ct.total], ...)
     ymax = total[ct.total].max()
     fig_bar.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(range=[0, ymax * 1.2]))
 
