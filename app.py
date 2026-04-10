@@ -191,7 +191,9 @@ def main():
     ]
 
     # Grafik tren
-# --- FIX: Urut berdasarkan bulan + tetap Indo ---
+# Grafik tren
+
+# 1. DEFINISI DULU (WAJIB DI ATAS)
 bulan_map = {
     "Jan": "Jan", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr",
     "Mei": "May", "Jun": "Jun", "Jul": "Jul", "Agu": "Aug",
@@ -204,33 +206,9 @@ bulan_map_reverse = {
     "Sep": "Sep", "Oct": "Okt", "Nov": "Nov", "Dec": "Des"
 }
 
-# pastikan string
-total[ct.tahun] = total[ct.tahun].astype(str).str.strip()
-
-# convert Indo → English
+# 2. BARU DI BAWAHNYA ADA LOOP
 for indo, eng in bulan_map.items():
     total[ct.tahun] = total[ct.tahun].str.replace(indo, eng, regex=False)
-
-# convert ke datetime
-total["date"] = pd.to_datetime(total[ct.tahun], errors="coerce")
-
-# drop error
-total = total.dropna(subset=["date"])
-
-# sort berdasarkan waktu
-total = total.sort_values("date")
-
-# balik ke format Indo
-total["label"] = total["date"].dt.strftime("%Y %b")
-
-for eng, indo in bulan_map_reverse.items():
-    total["label"] = total["label"].str.replace(eng, indo, regex=False)
-
-# numeric
-total[ct.total] = _to_numeric(total[ct.total])
-
-# growth
-total["YoY Change %"] = total[ct.total].pct_change() * 100
 
     fig_bar = go.Figure()
     fig_bar.add_bar(x=total["label"], y=total[ct.total], ...)
