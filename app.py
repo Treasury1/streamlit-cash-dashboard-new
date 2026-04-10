@@ -224,8 +224,8 @@ fig_bar.add_scatter(
     mode="lines+markers",
     line=dict(width=2)
 )
-    ymax = total[ct.total].max()
-    fig_bar.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(range=[0, ymax * 1.2]))
+ymax = total[ct.total].max()
+fig_bar.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(range=[0, ymax * 1.2]))
 
     colA, colB = st.columns(2)
     with colA:
