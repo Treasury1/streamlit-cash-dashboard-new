@@ -208,7 +208,7 @@ def main():
     total[ct.tahun] = total[ct.tahun].astype(str).str.strip()
 
     # Replace bulan Indo → English
-    for indo, eng in bulan_map.items():
+for indo, eng in bulan_map.items():
     total[ct.tahun] = total[ct.tahun].str.replace(indo, eng, regex=False)
 
     # Convert ke datetime (flexible, gak strict)
@@ -223,7 +223,7 @@ def main():
     # Format label Indo lagi
     total["label"] = total["date"].dt.strftime("%Y %b")
 
-    for eng, indo in bulan_map_reverse.items():
+for eng, indo in bulan_map_reverse.items():
     total["label"] = total["label"].str.replace(eng, indo, regex=False)
 
     # Numeric
