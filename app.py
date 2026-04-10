@@ -191,10 +191,43 @@ def main():
     ]
 
     # Grafik tren
-    total[ct.tahun] = total[ct.tahun].astype(str)
-    total[ct.total] = _to_numeric(total[ct.total])
-    total = total.sort_values(ct.tahun)
-    total["YoY Change %"] = total[ct.total].pct_change() * 100
+# --- FIX: Urut berdasarkan bulan + tetap tampil Indo ---
+bulan_map = {
+    "Jan": "Jan", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr",
+    "Mei": "May", "Jun": "Jun", "Jul": "Jul", "Agu": "Aug",
+    "Sep": "Sep", "Okt": "Oct", "Nov": "Nov", "Des": "Dec"
+}
+
+bulan_map_reverse = {
+    "Jan": "Jan", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr",
+    "May": "Mei", "Jun": "Jun", "Jul": "Jul", "Aug": "Agu",
+    "Sep": "Sep", "Oct": "Okt", "Nov": "Nov", "Dec": "Des"
+}
+
+# Pastikan string
+total[ct.tahun] = total[ct.tahun].astype(str)
+
+# Convert Indo → English dulu (biar kebaca datetime)
+total["tahun_eng"] = total[ct.tahun].replace(bulan_map, regex=True)
+
+# Convert ke datetime
+total["date"] = pd.to_datetime(total["tahun_eng"], format="%Y %b", errors="coerce")
+
+# Sort berdasarkan tanggal
+total = total.sort_values("date")
+
+# Balikin ke format Indo
+total["label"] = total["date"].dt.strftime("%Y %b")
+
+# Replace balik ke Indo
+for eng, indo in bulan_map_reverse.items():
+    total["label"] = total["label"].str.replace(eng, indo)
+
+# Numeric
+total[ct.total] = _to_numeric(total[ct.total])
+
+# Growth
+total["YoY Change %"] = total[ct.total].pct_change() * 100
 
     bar_texts = []
     for i, row in total.iterrows():
@@ -210,8 +243,8 @@ def main():
             bar_texts.append(val_text)
 
     fig_bar = go.Figure()
-    fig_bar.add_bar(x=total[ct.tahun], y=total[ct.total], text=bar_texts, textposition="outside")
-    fig_bar.add_scatter(x=total[ct.tahun], y=total[ct.total], mode="lines+markers", line=dict(width=2))
+    fig_bar.add_bar(x=total["label"], y=total[ct.total], text=bar_texts, textposition="outside")
+    fig_bar.add_scatter(x=total["label"], y=total[ct.total], mode="lines+markers", line=dict(width=2))
     ymax = total[ct.total].max()
     fig_bar.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(range=[0, ymax * 1.2]))
 
